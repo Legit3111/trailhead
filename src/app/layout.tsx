@@ -1,5 +1,9 @@
+import "./globals.css";
+import { Nav } from "@/components/Nav";
+import { Topo } from "@/components/Topo";
+
 export const metadata = {
-  title: "Trailhead",
+  title: "Trailhead — Learn anything through a roadmap that remembers",
   description: "Learn anything through a roadmap that remembers where you are.",
 };
 
@@ -9,18 +13,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body
-        style={{
-          fontFamily: "system-ui, -apple-system, sans-serif",
-          margin: 0,
-          background: "#0f1115",
-          color: "#e6e8ec",
-        }}
-      >
-        <main style={{ maxWidth: 720, margin: "0 auto", padding: "32px 20px" }}>
-          {children}
-        </main>
+    <html lang="en" data-theme="light">
+      <body>
+        <div className="app">
+          <Topo opacity={0.55} />
+          <Nav />
+          <main className="app-main">{children}</main>
+        </div>
       </body>
     </html>
   );
