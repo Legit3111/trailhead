@@ -246,7 +246,7 @@ function LeftRail({ curriculum }: { curriculum: SampleCurriculum }) {
 }
 
 function MessageRow({ msg }: { msg: TranscriptMessage }) {
-  if (msg.role === "system" && msg.kind === "phase-marker") {
+  if (msg.role === "system") {
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "8px 0" }}>
         <span style={{ flex: 1, height: 1, background: "var(--paper-edge)" }} />
