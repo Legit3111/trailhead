@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { Avatar } from "@/components/Avatar";
 import { Icon } from "@/components/Icon";
@@ -16,20 +17,85 @@ import {
 } from "@/lib/sample-curriculum";
 
 function LearnInner() {
+  const searchParams = useSearchParams();
   const c = SAMPLE_CURRICULUM;
   const [messages, setMessages] = useState<TranscriptMessage[]>(TRANSCRIPT);
   const [input, setInput] = useState("");
+  const [liveContext, setLiveContext] = useState<LiveContext | null>(null);
+  const [isSending, setIsSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const curriculumId = searchParams.get("curriculum");
+  const moduleId = searchParams.get("module");
+  const requestedPhase = searchParams.get("phase");
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [messages]);
 
-  function send() {
+  useEffect(() => {
+    if (!curriculumId || !moduleId || !isPhase(requestedPhase)) {
+      setLiveContext(null);
+      return;
+    }
+
+    let cancelled = false;
+    const phase = requestedPhase;
+    fetch(`/api/phase?module=${encodeURIComponent(moduleId)}&phase=${encodeURIComponent(phase)}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("phase lookup failed"))))
+      .then((d) => {
+        if (!cancelled) {
+          setLiveContext({ curriculumId, moduleId, phaseId: d.phase.id, phase });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLiveContext(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [curriculumId, moduleId, requestedPhase]);
+
+  async function send() {
     const text = input.trim();
-    if (!text) return;
+    if (!text || isSending) return;
     setInput("");
     setMessages((m) => [...m, { role: "user", body: text }]);
+
+    if (liveContext) {
+      setIsSending(true);
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...liveContext, userMessage: text }),
+        });
+        if (!response.ok) throw new Error("chat failed");
+        const data = await response.json();
+        setMessages((m) => [
+          ...m,
+          {
+            role: "tutor",
+            body:
+              data.reply ||
+              "I saved that turn, but did not get tutor text back. Try again in a moment.",
+          },
+        ]);
+      } catch {
+        setMessages((m) => [
+          ...m,
+          {
+            role: "tutor",
+            body: "I could not reach the live tutor backend, so this turn was not saved. The prototype transcript is still available while the database/API config is fixed.",
+          },
+        ]);
+      } finally {
+        setIsSending(false);
+      }
+      return;
+    }
+
     // Optimistic auto-save chip — mirrors the design's "auto-save just fires" feel.
     const snippet = text.slice(0, 48) + (text.length > 48 ? "…" : "");
     window.setTimeout(() => {
@@ -113,12 +179,23 @@ function LearnInner() {
           </div>
         </div>
 
-        <Composer value={input} onChange={setInput} onSend={send} />
+        <Composer value={input} onChange={setInput} onSend={send} disabled={isSending} />
       </div>
 
       <ContextCard />
     </div>
   );
+}
+
+type LiveContext = {
+  curriculumId: string;
+  moduleId: string;
+  phaseId: string;
+  phase: Phase;
+};
+
+function isPhase(value: string | null): value is Phase {
+  return value === "theory" || value === "practical" || value === "quiz";
 }
 
 function LeftRail({ curriculum }: { curriculum: SampleCurriculum }) {
@@ -312,10 +389,12 @@ function Composer({
   value,
   onChange,
   onSend,
+  disabled = false,
 }: {
   value: string;
   onChange: (v: string) => void;
   onSend: () => void;
+  disabled?: boolean;
 }) {
   return (
     <div
@@ -364,8 +443,8 @@ function Composer({
           <button
             className="btn btn-sm"
             onClick={onSend}
-            disabled={!value.trim()}
-            style={{ opacity: value.trim() ? 1 : 0.4 }}
+            disabled={!value.trim() || disabled}
+            style={{ opacity: value.trim() && !disabled ? 1 : 0.4 }}
             type="button"
           >
             <Icon name="send" size={13} color="var(--paper)" />
