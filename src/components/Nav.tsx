@@ -2,20 +2,44 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { BrandMark } from "./BrandMark";
 
-const tabs: { href: string; label: string; match: (p: string) => boolean }[] = [
-  { href: "/", label: "Home", match: (p) => p === "/" },
-  { href: "/learn", label: "Continue", match: (p) => p.startsWith("/learn") },
-  {
-    href: "/curriculum/build",
-    label: "New trail",
-    match: (p) => p.startsWith("/curriculum"),
-  },
-];
+type Tab = { href: string; label: string; match: (p: string) => boolean };
+type ProgressResponse = {
+  curriculum?: {
+    id: string;
+    resume: { moduleId: string; phase: string };
+  } | null;
+};
+
+function continueUrl(progress: ProgressResponse | null) {
+  const active = progress?.curriculum;
+  if (!active?.id || !active.resume?.moduleId || !active.resume?.phase) return "/learn";
+  return `/learn?curriculum=${active.id}&module=${active.resume.moduleId}&phase=${active.resume.phase}`;
+}
 
 export function Nav({ streakDays = 6, modelLabel = "claude-sonnet-4-5" }: { streakDays?: number; modelLabel?: string }) {
   const pathname = usePathname();
+  const [progress, setProgress] = useState<ProgressResponse | null>(null);
+
+  useEffect(() => {
+    fetch("/api/progress")
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setProgress)
+      .catch(() => setProgress(null));
+  }, []);
+
+  const tabs: Tab[] = [
+    { href: "/", label: "Home", match: (p) => p === "/" },
+    { href: continueUrl(progress), label: "Continue", match: (p) => p.startsWith("/learn") },
+    {
+      href: "/curriculum/build",
+      label: "New trail",
+      match: (p) => p.startsWith("/curriculum"),
+    },
+  ];
+
   return (
     <nav className="nav">
       <Link href="/" className="nav-brand">
@@ -25,7 +49,7 @@ export function Nav({ streakDays = 6, modelLabel = "claude-sonnet-4-5" }: { stre
       <div className="nav-tabs">
         {tabs.map((t) => (
           <Link
-            key={t.href}
+            key={t.label}
             href={t.href}
             className={`nav-tab ${t.match(pathname) ? "active" : ""}`}
           >
