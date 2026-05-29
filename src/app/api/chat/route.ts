@@ -18,18 +18,44 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing context." }, { status: 400 });
     }
 
-    // 1. Persist the learner's message immediately.
-    if (userMessage) {
-      await prisma.message.create({
-        data: {
-          curriculumId,
-          moduleId,
-          phaseId,
-          role: Role.user,
-          content: userMessage,
-        },
-      });
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return NextResponse.json(
+        { error: "Tutor is not configured: missing ANTHROPIC_API_KEY." },
+        { status: 503 }
+      );
     }
+
+    if (typeof userMessage !== "string" || !userMessage.trim()) {
+      return NextResponse.json({ error: "Message required." }, { status: 400 });
+    }
+
+    if (!Object.values(PhaseKind).includes(phase as PhaseKind)) {
+      return NextResponse.json({ error: "Invalid phase." }, { status: 400 });
+    }
+
+    const phaseRow = await prisma.phase.findFirst({
+      where: {
+        id: phaseId,
+        kind: phase as PhaseKind,
+        module: { id: moduleId, curriculumId },
+      },
+      select: { id: true },
+    });
+
+    if (!phaseRow) {
+      return NextResponse.json({ error: "Invalid curriculum/module/phase context." }, { status: 404 });
+    }
+
+    // 1. Persist the learner's message immediately after context validation.
+    await prisma.message.create({
+      data: {
+        curriculumId,
+        moduleId,
+        phaseId,
+        role: Role.user,
+        content: userMessage.trim(),
+      },
+    });
 
     const system = await buildSystemPrompt(
       curriculumId,

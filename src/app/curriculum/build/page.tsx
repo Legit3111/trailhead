@@ -7,21 +7,110 @@ import { Pill } from "@/components/Pill";
 import { BUILDER_DRAFT, type BuilderDraft } from "@/lib/sample-curriculum";
 
 type Stage = "prompt" | "drafting" | "review";
+type GeneratedModule = { id: string; title: string; objectives?: string | null };
+type CurriculumResponse = {
+  curriculum: {
+    id: string;
+    title: string;
+    subject?: string | null;
+    goal?: string | null;
+    modules: GeneratedModule[];
+  };
+  generatedBy?: "model" | "local";
+};
+
+function responseToDraft(data: CurriculumResponse, fallbackGoal: string): BuilderDraft {
+  const modules = data.curriculum.modules.length > 0 ? data.curriculum.modules : [];
+  return {
+    topic: data.curriculum.title,
+    goal: data.curriculum.goal ?? fallbackGoal,
+    weeks: Math.max(1, Math.ceil(modules.length / 5)),
+    modules: modules.map((m, i) => ({
+      week: i + 1,
+      title: m.title,
+      days: [m.objectives || `Work through ${m.title}`],
+    })),
+  };
+}
 
 export default function BuildPage() {
   const [stage, setStage] = useState<Stage>("prompt");
   const [topic, setTopic] = useState(BUILDER_DRAFT.topic);
   const [goal, setGoal] = useState("Implement a working 6-DOF EKF in Python");
   const [draft, setDraft] = useState<BuilderDraft>(BUILDER_DRAFT);
+  const [scheduleDays, setScheduleDays] = useState("28");
+  const [dailyMinutes, setDailyMinutes] = useState("45");
+  const [level, setLevel] = useState("intermediate");
+  const [curriculumId, setCurriculumId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
   const router = useRouter();
 
-  function startDraft() {
+  async function startDraft() {
+    if (!topic.trim() || isSaving) return;
     setStage("drafting");
-    window.setTimeout(() => setStage("review"), 2200);
+    setNotice(null);
+    setIsSaving(true);
+    try {
+      const response = await fetch("/api/curriculum", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: topic.trim(),
+          goal: goal.trim(),
+          target: goal.trim(),
+          level,
+          constraints: `${scheduleDays} days at ${dailyMinutes} minutes per day`,
+        }),
+      });
+      if (!response.ok) throw new Error("draft request failed");
+      const data = (await response.json()) as CurriculumResponse;
+      setCurriculumId(data.curriculum.id);
+      setDraft(responseToDraft(data, goal));
+      if (data.generatedBy === "local") {
+        setNotice("Model provider is not configured, so a local editable draft was saved instead.");
+      }
+    } catch {
+      setCurriculumId(null);
+      setDraft({ ...BUILDER_DRAFT, topic, goal });
+      setNotice("Could not reach the curriculum backend. Showing an editable local draft; saving/approval needs the API.");
+    } finally {
+      setIsSaving(false);
+      setStage("review");
+    }
+  }
+
+  async function approveDraft() {
+    if (!curriculumId) {
+      router.push("/learn");
+      return;
+    }
+    setIsSaving(true);
+    setNotice(null);
+    try {
+      const response = await fetch("/api/curriculum", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: curriculumId,
+          action: "activate",
+          modules: draft.modules.map((m) => ({ title: m.title, objectives: m.days.join("\n") })),
+        }),
+      });
+      if (!response.ok) throw new Error("activation failed");
+      const data = await response.json();
+      const resume = data.resume;
+      router.push(`/learn?curriculum=${resume.curriculumId}&module=${resume.moduleId}&phase=${resume.phase}`);
+    } catch {
+      setNotice("Draft was created but could not be activated. Try Save as draft, then approve again once the backend is reachable.");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   return (
     <div style={{ maxWidth: 980, margin: "0 auto", padding: "56px 32px 80px" }}>
+      {notice && <StatusNotice tone="warn">{notice}</StatusNotice>}
       {stage === "prompt" && (
         <PromptStage
           topic={topic}
@@ -29,6 +118,13 @@ export default function BuildPage() {
           goal={goal}
           setGoal={setGoal}
           onStart={startDraft}
+          isSaving={isSaving}
+          scheduleDays={scheduleDays}
+          setScheduleDays={setScheduleDays}
+          dailyMinutes={dailyMinutes}
+          setDailyMinutes={setDailyMinutes}
+          level={level}
+          setLevel={setLevel}
         />
       )}
       {stage === "drafting" && <DraftingStage topic={topic} />}
@@ -36,10 +132,31 @@ export default function BuildPage() {
         <ReviewStage
           draft={draft}
           setDraft={setDraft}
-          onApprove={() => router.push("/")}
+          onApprove={approveDraft}
           onBack={() => setStage("prompt")}
+          onSaveDraft={() => setNotice(curriculumId ? "Draft saved. You can leave and approve it later." : "Local draft only — backend save did not complete.")}
+          isSaving={isSaving}
         />
       )}
+    </div>
+  );
+}
+
+function StatusNotice({ tone, children }: { tone: "warn" | "ok"; children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        padding: "10px 12px",
+        marginBottom: 18,
+        borderRadius: 10,
+        border: "1px solid var(--card-edge)",
+        background: tone === "ok" ? "var(--card)" : "var(--clay-soft)",
+        color: "var(--ink-2)",
+        fontSize: 13,
+        lineHeight: 1.4,
+      }}
+    >
+      {children}
     </div>
   );
 }
@@ -60,12 +177,26 @@ function PromptStage({
   goal,
   setGoal,
   onStart,
+  isSaving,
+  scheduleDays,
+  setScheduleDays,
+  dailyMinutes,
+  setDailyMinutes,
+  level,
+  setLevel,
 }: {
   topic: string;
   setTopic: (v: string) => void;
   goal: string;
   setGoal: (v: string) => void;
   onStart: () => void;
+  isSaving: boolean;
+  scheduleDays: string;
+  setScheduleDays: (v: string) => void;
+  dailyMinutes: string;
+  setDailyMinutes: (v: string) => void;
+  level: string;
+  setLevel: (v: string) => void;
 }) {
   const examples = [
     "Kalman filters for drone navigation",
@@ -147,21 +278,21 @@ function PromptStage({
         >
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <span className="kicker">Schedule</span>
-            <select style={selectStyle} defaultValue="28">
+            <select style={selectStyle} value={scheduleDays} onChange={(e) => setScheduleDays(e.target.value)}>
               <option value="14">14 days</option>
               <option value="21">21 days</option>
               <option value="28">28 days</option>
               <option value="56">8 weeks</option>
             </select>
-            <select style={selectStyle} defaultValue="45">
+            <select style={selectStyle} value={dailyMinutes} onChange={(e) => setDailyMinutes(e.target.value)}>
               <option value="30">30 min / day</option>
               <option value="45">45 min / day</option>
               <option value="60">1 hr / day</option>
             </select>
-            <select style={selectStyle} defaultValue="intermediate">
-              <option>beginner</option>
-              <option>intermediate</option>
-              <option>advanced</option>
+            <select style={selectStyle} value={level} onChange={(e) => setLevel(e.target.value)}>
+              <option value="beginner">beginner</option>
+              <option value="intermediate">intermediate</option>
+              <option value="advanced">advanced</option>
             </select>
           </div>
         </div>
@@ -171,10 +302,10 @@ function PromptStage({
         <button
           className="btn btn-lg btn-clay"
           onClick={onStart}
-          disabled={!topic.trim()}
+          disabled={!topic.trim() || isSaving}
           type="button"
         >
-          <Icon name="sparkles" size={14} color="white" /> Draft the roadmap
+          <Icon name="sparkles" size={14} color="white" /> {isSaving ? "Drafting…" : "Draft the roadmap"}
         </button>
         <span style={{ color: "var(--ink-3)", fontSize: 13 }}>
           ~10 sec · always editable after
@@ -351,13 +482,35 @@ function ReviewStage({
   setDraft,
   onApprove,
   onBack,
+  onSaveDraft,
+  isSaving,
 }: {
   draft: BuilderDraft;
   setDraft: (d: BuilderDraft) => void;
   onApprove: () => void;
   onBack: () => void;
+  onSaveDraft: () => void;
+  isSaving: boolean;
 }) {
   const [editingDay, setEditingDay] = useState<string | null>(null);
+  const [editingModule, setEditingModule] = useState<number | null>(null);
+
+  function updateModuleTitle(wi: number, value: string) {
+    setDraft({
+      ...draft,
+      modules: draft.modules.map((m, i) => (i === wi ? { ...m, title: value } : m)),
+    });
+  }
+
+  function addDay(wi: number) {
+    const next: BuilderDraft = {
+      ...draft,
+      modules: draft.modules.map((m) => ({ ...m, days: [...m.days] })),
+    };
+    next.modules[wi].days.push("New practice day");
+    setDraft(next);
+    setEditingDay(`${wi}-${next.modules[wi].days.length - 1}`);
+  }
 
   function updateDay(wi: number, di: number, value: string) {
     const next: BuilderDraft = {
@@ -420,14 +573,38 @@ function ReviewStage({
             >
               <div>
                 <div className="kicker">Week {m.week}</div>
-                <div
-                  className="serif"
-                  style={{ fontSize: 22, lineHeight: 1.1, marginTop: 4 }}
-                >
-                  {m.title}
-                </div>
+                {editingModule === wi ? (
+                  <input
+                    autoFocus
+                    value={m.title}
+                    onChange={(e) => updateModuleTitle(wi, e.target.value)}
+                    onBlur={() => setEditingModule(null)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") setEditingModule(null);
+                    }}
+                    style={{
+                      border: "none",
+                      outline: "none",
+                      background: "transparent",
+                      color: "var(--ink)",
+                      fontFamily: "var(--serif)",
+                      fontSize: 22,
+                      lineHeight: 1.1,
+                      marginTop: 4,
+                      borderBottom: "1px solid var(--clay)",
+                    }}
+                  />
+                ) : (
+                  <div
+                    className="serif"
+                    onClick={() => setEditingModule(wi)}
+                    style={{ fontSize: 22, lineHeight: 1.1, marginTop: 4, cursor: "text" }}
+                  >
+                    {m.title}
+                  </div>
+                )}
               </div>
-              <button className="btn btn-sm btn-ghost" type="button">
+              <button className="btn btn-sm btn-ghost" onClick={() => setEditingModule(wi)} type="button">
                 <Icon name="edit" size={12} /> Rename
               </button>
             </div>
@@ -503,6 +680,7 @@ function ReviewStage({
               })}
               <button
                 type="button"
+                onClick={() => addDay(wi)}
                 style={{
                   ...iconBtn,
                   alignSelf: "flex-start",
@@ -542,11 +720,11 @@ function ReviewStage({
           <span style={{ color: "var(--ink-3)", fontSize: 13 }}>
             You can keep editing any day inside the tutor.
           </span>
-          <button className="btn btn-ghost" type="button">
+          <button className="btn btn-ghost" onClick={onSaveDraft} disabled={isSaving} type="button">
             Save as draft
           </button>
-          <button className="btn btn-clay" onClick={onApprove} type="button">
-            Approve &amp; start Day 1 <Icon name="arrow-right" size={13} color="white" />
+          <button className="btn btn-clay" onClick={onApprove} disabled={isSaving} type="button">
+            {isSaving ? "Starting…" : "Approve & start Day 1"} <Icon name="arrow-right" size={13} color="white" />
           </button>
         </div>
       </div>

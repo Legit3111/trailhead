@@ -43,6 +43,18 @@ export default function Home() {
     ? `/learn?curriculum=${apiActive.id}&module=${apiActive.resume.moduleId}&phase=${apiActive.resume.phase}`
     : "/learn";
 
+  useEffect(() => {
+    function resumeOnEnter(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const isTyping = target && ["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"].includes(target.tagName);
+      if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !isTyping) {
+        window.location.href = continueHref;
+      }
+    }
+    window.addEventListener("keydown", resumeOnEnter);
+    return () => window.removeEventListener("keydown", resumeOnEnter);
+  }, [continueHref]);
+
   const recent: { tool: string; label: string; when: string }[] = [
     { tool: "save_note", label: '"IQ vs real: real sees the wheel, IQ sees the stripe"', when: "2m ago" },
     { tool: "save_note", label: '"IQ file = interleaved I,Q,I,Q… cs8 means signed int8"', when: "8m ago" },
@@ -93,9 +105,9 @@ export default function Home() {
               <Icon name="play" size={14} color="white" />
               Continue Day {c.currentDay} · Practical
             </Link>
-            <button className="btn btn-lg btn-ghost" type="button">
-              Open notebook
-            </button>
+            <Link href={continueHref} className="btn btn-lg btn-ghost">
+              Open tutor notes
+            </Link>
             <span style={{ marginLeft: 8, color: "var(--ink-3)", fontSize: 13 }}>
               <KeyHint keys={["↵"]} /> to resume
             </span>
@@ -231,8 +243,10 @@ export default function Home() {
           </div>
           <div className="col" style={{ gap: 2 }}>
             {OTHER_TRAILS.map((t) => (
-              <div
+              <Link
                 key={t.id}
+                href="/learn"
+                aria-label={`Open ${t.title}`}
                 style={{
                   display: "grid",
                   gridTemplateColumns: "1fr auto auto",
@@ -240,6 +254,8 @@ export default function Home() {
                   alignItems: "center",
                   padding: "12px 4px",
                   borderTop: "1px solid var(--paper-edge)",
+                  color: "inherit",
+                  textDecoration: "none",
                 }}
               >
                 <div className="col" style={{ gap: 2 }}>
@@ -272,7 +288,7 @@ export default function Home() {
                   />
                 </div>
                 <Icon name="chevron-r" size={14} color="var(--ink-3)" />
-              </div>
+              </Link>
             ))}
           </div>
         </div>

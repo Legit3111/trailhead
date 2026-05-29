@@ -2,6 +2,19 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "./prisma";
 import { PhaseKind, PhaseStatus, ModuleStatus } from "@prisma/client";
 
+const PHASE_ORDER = [PhaseKind.theory, PhaseKind.practical, PhaseKind.quiz] as const;
+
+function nextPhase(kind: PhaseKind): PhaseKind | null {
+  const i = PHASE_ORDER.indexOf(kind);
+  return i >= 0 ? PHASE_ORDER[i + 1] ?? null : null;
+}
+
+function parsePhase(value: unknown): PhaseKind | null {
+  return typeof value === "string" && (PHASE_ORDER as readonly string[]).includes(value)
+    ? (value as PhaseKind)
+    : null;
+}
+
 /**
  * THE CRITICAL MECHANIC (PRD §5).
  * The tutor emits these tools mid-conversation. The backend executes them
@@ -82,69 +95,119 @@ export async function runTutorTool(
 ): Promise<string> {
   switch (name) {
     case "mark_phase_complete": {
-      const phase = input.phase as PhaseKind;
-      await prisma.phase.updateMany({
-        where: { moduleId: ctx.moduleId, kind: phase },
-        data: { status: PhaseStatus.complete },
-      });
-      return `Phase ${phase} marked complete.`;
+      const phase = parsePhase(input.phase);
+      if (!phase) return "Invalid phase; nothing saved.";
+
+      const upcomingPhase = nextPhase(phase);
+      await prisma.$transaction([
+        prisma.phase.updateMany({
+          where: { moduleId: ctx.moduleId, kind: phase },
+          data: { status: PhaseStatus.complete },
+        }),
+        ...(upcomingPhase
+          ? [
+              prisma.phase.updateMany({
+                where: { moduleId: ctx.moduleId, kind: upcomingPhase },
+                data: { status: PhaseStatus.in_progress },
+              }),
+            ]
+          : []),
+        prisma.module.update({
+          where: { id: ctx.moduleId },
+          data: { status: ModuleStatus.in_progress },
+        }),
+        prisma.curriculum.update({
+          where: { id: ctx.curriculumId },
+          data: {
+            currentModuleId: ctx.moduleId,
+            currentPhase: upcomingPhase ?? phase,
+          },
+        }),
+      ]);
+      return upcomingPhase
+        ? `Phase ${phase} marked complete; resume moved to ${upcomingPhase}.`
+        : `Phase ${phase} marked complete.`;
     }
     case "record_quiz_result": {
+      const score = Number(input.score);
+      const total = Number(input.total);
+      if (!Number.isFinite(score) || !Number.isFinite(total) || total <= 0 || score < 0 || score > total) {
+        return "Invalid quiz result; nothing saved.";
+      }
+
       await prisma.quizResult.create({
         data: {
           curriculumId: ctx.curriculumId,
           moduleId: ctx.moduleId,
-          score: Number(input.score),
-          total: Number(input.total),
-          details: (input.details as string) ?? null,
+          score: Math.round(score),
+          total: Math.round(total),
+          details: typeof input.details === "string" ? input.details : null,
         },
       });
-      return `Quiz result saved: ${input.score}/${input.total}.`;
+      return `Quiz result saved: ${Math.round(score)}/${Math.round(total)}.`;
     }
     case "save_note": {
+      const content = typeof input.content === "string" ? input.content.trim() : "";
+      if (!content) return "Empty note ignored.";
+
       await prisma.note.create({
         data: {
           curriculumId: ctx.curriculumId,
           moduleId: ctx.moduleId,
-          content: input.content as string,
+          content,
         },
       });
       return "Note saved.";
     }
     case "mark_module_complete": {
-      await prisma.module.update({
-        where: { id: ctx.moduleId },
-        data: { status: ModuleStatus.complete },
+      const current = await prisma.module.findFirst({
+        where: { id: ctx.moduleId, curriculumId: ctx.curriculumId },
       });
-      // Unlock the next module by order index.
-      const current = await prisma.module.findUnique({
-        where: { id: ctx.moduleId },
+      if (!current) return "Module not found; nothing saved.";
+
+      const next = await prisma.module.findFirst({
+        where: {
+          curriculumId: ctx.curriculumId,
+          orderIndex: current.orderIndex + 1,
+        },
       });
-      if (current) {
-        const next = await prisma.module.findFirst({
-          where: {
-            curriculumId: ctx.curriculumId,
-            orderIndex: current.orderIndex + 1,
-          },
-        });
-        if (next) {
-          await prisma.module.update({
-            where: { id: next.id },
-            data: { status: ModuleStatus.available },
-          });
-          await prisma.curriculum.update({
-            where: { id: ctx.curriculumId },
-            data: { currentModuleId: next.id, currentPhase: PhaseKind.theory },
-          });
-        }
-      }
-      return "Module marked complete; next module unlocked.";
+
+      await prisma.$transaction([
+        prisma.module.update({
+          where: { id: ctx.moduleId },
+          data: { status: ModuleStatus.complete },
+        }),
+        ...(next
+          ? [
+              prisma.module.update({
+                where: { id: next.id },
+                data: { status: ModuleStatus.available },
+              }),
+              prisma.curriculum.update({
+                where: { id: ctx.curriculumId },
+                data: { currentModuleId: next.id, currentPhase: PhaseKind.theory },
+              }),
+            ]
+          : [
+              prisma.curriculum.update({
+                where: { id: ctx.curriculumId },
+                data: { currentModuleId: ctx.moduleId, currentPhase: PhaseKind.quiz },
+              }),
+            ]),
+      ]);
+
+      return next
+        ? "Module marked complete; next module unlocked."
+        : "Final module marked complete.";
     }
     case "log_stuck": {
+      const entry = typeof input.entry === "string" ? input.entry.trim() : "";
+      if (!entry) return "Empty stuck entry ignored.";
+
       await prisma.stuckLog.create({
         data: {
           curriculumId: ctx.curriculumId,
-          entry: input.entry as string,
+          entry,
         },
       });
       return "Stuck entry logged.";

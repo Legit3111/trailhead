@@ -22,6 +22,7 @@ function LearnInner() {
   const [messages, setMessages] = useState<TranscriptMessage[]>(TRANSCRIPT);
   const [input, setInput] = useState("");
   const [liveContext, setLiveContext] = useState<LiveContext | null>(null);
+  const [liveStatus, setLiveStatus] = useState<"sample" | "loading" | "live" | "offline">("sample");
   const [isSending, setIsSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -36,20 +37,26 @@ function LearnInner() {
   useEffect(() => {
     if (!curriculumId || !moduleId || !isPhase(requestedPhase)) {
       setLiveContext(null);
+      setLiveStatus("sample");
       return;
     }
 
     let cancelled = false;
     const phase = requestedPhase;
+    setLiveStatus("loading");
     fetch(`/api/phase?module=${encodeURIComponent(moduleId)}&phase=${encodeURIComponent(phase)}`)
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("phase lookup failed"))))
       .then((d) => {
         if (!cancelled) {
           setLiveContext({ curriculumId, moduleId, phaseId: d.phase.id, phase });
+          setLiveStatus("live");
         }
       })
       .catch(() => {
-        if (!cancelled) setLiveContext(null);
+        if (!cancelled) {
+          setLiveContext(null);
+          setLiveStatus("offline");
+        }
       });
 
     return () => {
@@ -162,6 +169,7 @@ function LearnInner() {
           </div>
           <PhaseProgress current={c.currentPhase as Phase} />
         </div>
+        <LiveStatusBadge status={liveStatus} />
 
         <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "24px 32px 12px" }}>
           <div
@@ -183,6 +191,30 @@ function LearnInner() {
       </div>
 
       <ContextCard />
+    </div>
+  );
+}
+
+function LiveStatusBadge({ status }: { status: "sample" | "loading" | "live" | "offline" }) {
+  const copy = {
+    sample: "Sample tutor mode — start or continue an active trail to save messages.",
+    loading: "Connecting to saved trail…",
+    live: "Live trail connected — tutor messages and tools will be saved.",
+    offline: "Could not resolve this saved phase. Continuing in sample mode; try returning from Home.",
+  }[status];
+
+  return (
+    <div
+      style={{
+        padding: "8px 32px",
+        borderBottom: "1px solid var(--paper-edge)",
+        background: status === "live" ? "var(--card)" : "var(--clay-soft)",
+        color: "var(--ink-2)",
+        fontSize: 12,
+        fontFamily: "var(--mono)",
+      }}
+    >
+      {copy}
     </div>
   );
 }
@@ -243,8 +275,10 @@ function LeftRail({ curriculum }: { curriculum: SampleCurriculum }) {
               const isCurrent = d.status === "current";
               const isDone = d.status === "done";
               return (
-                <div
+                <Link
                   key={d.n}
+                  href={`/learn#day-${d.n}`}
+                  aria-current={isCurrent ? "page" : undefined}
                   style={{
                     display: "flex",
                     alignItems: "center",
@@ -260,6 +294,7 @@ function LeftRail({ curriculum }: { curriculum: SampleCurriculum }) {
                       : "var(--ink-3)",
                     cursor: "pointer",
                     fontWeight: isCurrent ? 500 : 400,
+                    textDecoration: "none",
                   }}
                 >
                   <span
@@ -312,7 +347,7 @@ function LeftRail({ curriculum }: { curriculum: SampleCurriculum }) {
                   >
                     {d.title}
                   </span>
-                </div>
+                </Link>
               );
             })}
           </div>
