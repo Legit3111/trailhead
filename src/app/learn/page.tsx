@@ -22,6 +22,7 @@ function LearnInner() {
   const [messages, setMessages] = useState<TranscriptMessage[]>(TRANSCRIPT);
   const [input, setInput] = useState("");
   const [liveContext, setLiveContext] = useState<LiveContext | null>(null);
+  const [liveSummary, setLiveSummary] = useState<LiveSummary | null>(null);
   const [liveStatus, setLiveStatus] = useState<"sample" | "loading" | "live" | "offline">("sample");
   const [isSending, setIsSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -37,6 +38,7 @@ function LearnInner() {
   useEffect(() => {
     if (!curriculumId || !moduleId || !isPhase(requestedPhase)) {
       setLiveContext(null);
+      setLiveSummary(null);
       setLiveStatus("sample");
       return;
     }
@@ -44,17 +46,28 @@ function LearnInner() {
     let cancelled = false;
     const phase = requestedPhase;
     setLiveStatus("loading");
-    fetch(`/api/phase?module=${encodeURIComponent(moduleId)}&phase=${encodeURIComponent(phase)}`)
-      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("phase lookup failed"))))
-      .then((d) => {
+    Promise.all([
+      fetch(`/api/phase?module=${encodeURIComponent(moduleId)}&phase=${encodeURIComponent(phase)}`).then((r) =>
+        r.ok ? r.json() : Promise.reject(new Error("phase lookup failed"))
+      ),
+      fetch("/api/progress").then((r) => (r.ok ? r.json() : null)),
+    ])
+      .then(([phaseData, progressData]) => {
         if (!cancelled) {
-          setLiveContext({ curriculumId, moduleId, phaseId: d.phase.id, phase });
+          setLiveContext({ curriculumId, moduleId, phaseId: phaseData.phase.id, phase });
+          const active = progressData?.curriculum;
+          setLiveSummary(
+            active?.id === curriculumId
+              ? { title: active.title, moduleTitle: active.resume.moduleTitle, phase }
+              : { title: "Saved trail", moduleTitle: "Current module", phase }
+          );
           setLiveStatus("live");
         }
       })
       .catch(() => {
         if (!cancelled) {
           setLiveContext(null);
+          setLiveSummary(null);
           setLiveStatus("offline");
         }
       });
@@ -122,6 +135,10 @@ function LearnInner() {
     }, 1400);
   }
 
+  const headerTitle = liveSummary?.title ?? c.title;
+  const headerModule = liveSummary?.moduleTitle ?? "Capturing a live signal";
+  const headerPhase = liveSummary?.phase ?? (c.currentPhase as Phase);
+
   return (
     <div
       style={{
@@ -157,17 +174,17 @@ function LearnInner() {
               className="kicker"
               style={{ display: "flex", alignItems: "center", gap: 6 }}
             >
-              <span>{c.title}</span>
+              <span>{headerTitle}</span>
               <Icon name="chevron-r" size={11} color="var(--ink-4)" />
-              <span>Week 2 · SDR Hands-on</span>
+              <span>{liveSummary ? "Saved progress" : "Week 2 · SDR Hands-on"}</span>
               <Icon name="chevron-r" size={11} color="var(--ink-4)" />
-              <span style={{ color: "var(--clay)" }}>Day {c.currentDay}</span>
+              <span style={{ color: "var(--clay)" }}>{liveSummary ? headerPhase : `Day ${c.currentDay}`}</span>
             </div>
             <div className="serif" style={{ fontSize: 24, lineHeight: 1.1 }}>
-              Capturing a live signal
+              {headerModule}
             </div>
           </div>
-          <PhaseProgress current={c.currentPhase as Phase} />
+          <PhaseProgress current={headerPhase} />
         </div>
         <LiveStatusBadge status={liveStatus} />
 
@@ -190,7 +207,7 @@ function LearnInner() {
         <Composer value={input} onChange={setInput} onSend={send} disabled={isSending} />
       </div>
 
-      <ContextCard />
+      <ContextCard liveSummary={liveSummary} />
     </div>
   );
 }
@@ -223,6 +240,12 @@ type LiveContext = {
   curriculumId: string;
   moduleId: string;
   phaseId: string;
+  phase: Phase;
+};
+
+type LiveSummary = {
+  title: string;
+  moduleTitle: string;
   phase: Phase;
 };
 
@@ -508,22 +531,29 @@ function Composer({
   );
 }
 
-function ContextCard() {
+function ContextCard({ liveSummary }: { liveSummary: LiveSummary | null }) {
   const c = SAMPLE_CURRICULUM;
-  const steps: { phase: string; label: string; status: "done" | "current" | "queued"; sub: string }[] = [
-    { phase: "theory", label: "Theory — IQ sampling intuition", status: "done", sub: "~8 min · 2 notes saved" },
-    { phase: "practical", label: "Practical — Capture FM band", status: "current", sub: "~25 min · in progress" },
-    { phase: "quiz", label: "Quiz — 6 questions", status: "queued", sub: "~5 min · queued" },
-  ];
+  const activePhase = liveSummary?.phase ?? "practical";
+  const steps: { phase: Phase; label: string; status: "done" | "current" | "queued"; sub: string }[] = liveSummary
+    ? [
+        { phase: "theory", label: "Theory", status: activePhase === "theory" ? "current" : "done", sub: activePhase === "theory" ? "in progress" : "ready" },
+        { phase: "practical", label: "Practical", status: activePhase === "practical" ? "current" : activePhase === "quiz" ? "done" : "queued", sub: activePhase === "practical" ? "in progress" : "queued" },
+        { phase: "quiz", label: "Quiz", status: activePhase === "quiz" ? "current" : "queued", sub: activePhase === "quiz" ? "in progress" : "queued" },
+      ]
+    : [
+        { phase: "theory", label: "Theory — IQ sampling intuition", status: "done", sub: "~8 min · 2 notes saved" },
+        { phase: "practical", label: "Practical — Capture FM band", status: "current", sub: "~25 min · in progress" },
+        { phase: "quiz", label: "Quiz — 6 questions", status: "queued", sub: "~5 min · queued" },
+      ];
 
   return (
     <div style={{ padding: "20px 22px", overflowY: "auto", background: "var(--paper)" }}>
-      <div className="kicker">Day {c.currentDay} · plan</div>
+      <div className="kicker">{liveSummary ? `${liveSummary.phase} · live plan` : `Day ${c.currentDay} · plan`}</div>
       <div
         className="serif"
         style={{ fontSize: 22, lineHeight: 1.15, margin: "6px 0 14px" }}
       >
-        Capturing a live signal
+        {liveSummary?.moduleTitle ?? "Capturing a live signal"}
       </div>
 
       <div className="col" style={{ gap: 8, marginBottom: 18 }}>

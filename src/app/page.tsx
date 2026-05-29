@@ -42,6 +42,9 @@ export default function Home() {
   const continueHref = apiActive
     ? `/learn?curriculum=${apiActive.id}&module=${apiActive.resume.moduleId}&phase=${apiActive.resume.phase}`
     : "/learn";
+  const continueLabel = apiActive
+    ? `Continue ${apiActive.resume.moduleTitle} · ${apiActive.resume.phase}`
+    : `Continue Day ${c.currentDay} · Practical`;
 
   useEffect(() => {
     function resumeOnEnter(event: KeyboardEvent) {
@@ -103,7 +106,7 @@ export default function Home() {
           <div style={{ display: "flex", gap: 12, marginTop: 28, alignItems: "center" }}>
             <Link href={continueHref} className="btn btn-lg btn-clay">
               <Icon name="play" size={14} color="white" />
-              Continue Day {c.currentDay} · Practical
+              {continueLabel}
             </Link>
             <Link href={continueHref} className="btn btn-lg btn-ghost">
               Open tutor notes
