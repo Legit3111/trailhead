@@ -18,11 +18,62 @@ const modules = Array.from({ length: 28 }, (_, i) => ({
   objectives: i === 0 ? "Setup complete; begin DSP fundamentals." : "TBD — fill from overview.md",
 }));
 
+const RESUME_ORDER_INDEX = 8; // Day 9, aligned with the current anti-jam sample transcript.
+
+async function alignAntiJamResume(curriculumId: string) {
+  const seededModules = await prisma.module.findMany({
+    where: { curriculumId },
+    orderBy: { orderIndex: "asc" },
+    include: { phases: true },
+  });
+
+  const current = seededModules[RESUME_ORDER_INDEX] ?? seededModules[0];
+  if (!current) return;
+
+  await prisma.$transaction([
+    ...seededModules.map((m) =>
+      prisma.module.update({
+        where: { id: m.id },
+        data: {
+          status:
+            m.orderIndex < RESUME_ORDER_INDEX
+              ? ModuleStatus.complete
+              : m.orderIndex === RESUME_ORDER_INDEX
+              ? ModuleStatus.in_progress
+              : ModuleStatus.locked,
+        },
+      })
+    ),
+    ...current.phases.map((phase) =>
+      prisma.phase.update({
+        where: { id: phase.id },
+        data: {
+          status:
+            phase.kind === PhaseKind.theory
+              ? PhaseStatus.complete
+              : phase.kind === PhaseKind.practical
+              ? PhaseStatus.in_progress
+              : PhaseStatus.not_started,
+        },
+      })
+    ),
+    prisma.curriculum.update({
+      where: { id: curriculumId },
+      data: {
+        status: CurriculumStatus.active,
+        currentModuleId: current.id,
+        currentPhase: PhaseKind.practical,
+      },
+    }),
+  ]);
+}
+
 async function main() {
   const existing = await prisma.curriculum.findFirst({
     where: { subject: "RF anti-jamming" },
   });
   if (existing) {
+    await alignAntiJamResume(existing.id);
     console.log("Anti-jam curriculum already seeded:", existing.id);
     return;
   }
@@ -56,14 +107,7 @@ async function main() {
     include: { modules: true },
   });
 
-  // Set resume pointer to Day 1, theory.
-  await prisma.curriculum.update({
-    where: { id: curriculum.id },
-    data: {
-      currentModuleId: curriculum.modules[0].id,
-      currentPhase: PhaseKind.theory,
-    },
-  });
+  await alignAntiJamResume(curriculum.id);
 
   console.log("Seeded anti-jam curriculum:", curriculum.id);
 }
