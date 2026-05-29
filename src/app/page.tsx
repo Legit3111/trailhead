@@ -35,16 +35,23 @@ export default function Home() {
   }, []);
 
   const c = SAMPLE_CURRICULUM;
-  const progressPct = Math.round(((c.currentDay - 1) / c.days) * 100);
+  const liveCompleted = apiActive?.progress.completed ?? c.currentDay - 1;
+  const liveTotal = apiActive?.progress.total ?? c.days;
+  const progressPct = apiActive
+    ? Math.round(apiActive.progress.pct * 100)
+    : Math.round(((c.currentDay - 1) / c.days) * 100);
   const liveTitle = apiActive?.title ?? c.title;
   const liveSubtitle = apiActive?.subject ?? c.subtitle;
+  const liveModuleTitle = apiActive?.resume.moduleTitle ?? `Day ${c.currentDay}`;
+  const livePhase = apiActive?.resume.phase ?? "Practical";
+  const liveDayLabel = apiActive
+    ? liveModuleTitle
+    : `Day ${c.currentDay}`;
 
   const continueHref = apiActive
     ? `/learn?curriculum=${apiActive.id}&module=${apiActive.resume.moduleId}&phase=${apiActive.resume.phase}`
     : "/learn";
-  const continueLabel = apiActive
-    ? `Continue ${apiActive.resume.moduleTitle} · ${apiActive.resume.phase}`
-    : `Continue Day ${c.currentDay} · Practical`;
+  const continueLabel = `Continue ${liveModuleTitle} · ${livePhase}`;
 
   useEffect(() => {
     function resumeOnEnter(event: KeyboardEvent) {
@@ -81,7 +88,7 @@ export default function Home() {
         <div>
           <Pill tone="neutral">Active trail · {c.startedAt} → today</Pill>
           <h1 className="display" style={{ marginTop: 14 }}>
-            You&apos;re <em>{c.currentDay} days in.</em>
+            You&apos;re <em>{progressPct}% through.</em>
             <br />
             Pick up where you
             <br />
@@ -96,12 +103,12 @@ export default function Home() {
               lineHeight: 1.55,
             }}
           >
-            Day {c.currentDay} —{" "}
+            {liveDayLabel} —{" "}
             <span style={{ color: "var(--ink)", fontWeight: 500 }}>
-              Capturing a live signal
+              {liveModuleTitle}
             </span>
-            . You stopped mid-Practical after saving a note about IQ sampling. Two
-            exercises left before the quiz.
+            . Continue the {livePhase} phase from the saved trail; the tutor will
+            keep notes, progress, and quiz results attached to this exact module.
           </p>
           <div style={{ display: "flex", gap: 12, marginTop: 28, alignItems: "center" }}>
             <Link href={continueHref} className="btn btn-lg btn-clay">
@@ -170,7 +177,7 @@ export default function Home() {
               />
             </span>
             <span>
-              {progressPct}% · {c.currentDay - 1}/{c.days} days
+              {progressPct}% · {liveCompleted}/{liveTotal} modules
             </span>
           </div>
         </div>
@@ -204,12 +211,12 @@ export default function Home() {
                   background: "var(--sage-deep)",
                 }}
               />{" "}
-              {c.currentDay - 1} done
+              {liveCompleted} done
             </Pill>
             <Pill tone="clay">
-              <span style={{ width: 6, height: 6, borderRadius: 99, background: "white" }} /> Day {c.currentDay} · here
+              <span style={{ width: 6, height: 6, borderRadius: 99, background: "white" }} /> {liveModuleTitle} · here
             </Pill>
-            <Pill tone="neutral">{c.days - c.currentDay} ahead</Pill>
+            <Pill tone="neutral">{Math.max(liveTotal - liveCompleted - 1, 0)} ahead</Pill>
           </div>
         </div>
         <RoadmapTopo modules={c.modules} onDayClick={() => { window.location.href = continueHref; }} />
